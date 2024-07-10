@@ -223,7 +223,7 @@ begin
   for I := 0 to High(Lines) do
   begin
     Line := Trim(Lines[I]);
-    if Length(Line) > 0 then
+    if (Length(Line) > 0) and (Line[Low(Line)] <> '!') then
       Insert(ParseTurp(TurpFilePath, I + 1, Line), Turps, Length(Turps));
   end;
 
