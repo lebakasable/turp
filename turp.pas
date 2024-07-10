@@ -7,7 +7,6 @@ type
   TStep = (Left, Right);
 
   TState = AnsiString;
-  TStateArray = array of TState;
   TSymbol = AnsiString;
   TSymbolArray = array of TSymbol;
 
@@ -98,7 +97,7 @@ begin
   Tokens := Tokenize(Source);
   if Length(Tokens) <> 5 then
   begin
-    WriteLn(StdErr, Format('%s:%d: Error: A single turp is expected to have 5 tokens', [FilePath, Line]));
+    WriteLn(StdErr, Format('%s:%d: ERROR: A single turp is expected to have 5 tokens', [FilePath, Line]));
     Halt(1);
   end;
 
@@ -109,34 +108,9 @@ begin
     'L': ParseTurp.Step := Left;
     'R': ParseTurp.Step := Right;
   else
-    WriteLn(StdErr, Format('%s:%d: Error: "%s" is not a correct step. Expected "L" or "R"', [FilePath, Line, Tokens[STEP]]));
+    WriteLn(StdErr, Format('%s:%d: ERROR: "%s" is not a correct step. Expected "L" or "R"', [FilePath, Line, Tokens[STEP]]));
   end;
   ParseTurp.Next := UpCase(Tokens[NEXT]);
-end;
-
-function GetTurpsStates(Turps: array of TTurp): TStateArray;
-var
-  States : TStateArray = ();
-  Turp : TTurp;
-
-  function StatesContains(Needle: TState): Boolean;
-  var
-    State : TState;
-  begin
-    for State in States do
-      if State = Needle then
-        Exit(True);
-    StatesContains := False;
-  end;
-begin
-  for Turp in Turps do
-  begin
-    if not StatesContains(Turp.Current) then
-      Insert(Turp.Current, States, Length(States));
-    if not StatesContains(Turp.Next) then
-      Insert(Turp.Next, States, Length(States));
-  end;
-  GetTurpsStates := States;
 end;
 
 function ReadLines(FilePath: AnsiString): TStringDynArray;
@@ -151,7 +125,7 @@ begin
   {$I+}
   if IOResult <> 0 then
   begin
-    WriteLn(StdErr, 'Error: Could not open file "', FilePath, '"');
+    WriteLn(StdErr, 'ERROR: Could not open file "', FilePath, '"');
     Halt(1);
   end;
 
@@ -187,55 +161,95 @@ begin
   ReadTokens := Tokens;
 end;
 
+procedure Usage(var Out: Text);
+begin
+  WriteLn(Out, 'Usage: turp [OPTIONS] <input.turp> <input.tape>');
+  WriteLn(Out, 'OPTIONS:');
+  WriteLn(Out, '  --help|-h             Print this help to stdout and exit with 0 exit code');
+  WriteLn(Out, '  --state|-s [STATE]    Start from a specific initial state (default: BEGIN)');
+  WriteLn(Out, '  --head|-p [POSITION]  Start from a specific head position (default: 0)');
+end;
+
 var
   I : LongWord;
+  Positionals : TStringDynArray = ();
+  Machine : TMachine;
 
+  procedure ExpectArgument;
+  begin
+    if I > ParamCount then
+    begin
+      Usage(StdErr);
+      WriteLn(StdErr, 'ERROR: No argument provided for flag `', ParamStr(I - 1), '`');
+      Halt(1);
+    end;
+  end;
+
+var
   TurpFilePath : AnsiString;
   TapeFilePath : AnsiString;
 
-  Lines : TStringDynArray;
-  Line : AnsiString;
+  TurpLines : TStringDynArray;
+  TurpLine : AnsiString;
 
   Turps : array of TTurp = ();
-
-  Machine : TMachine;
-  State : TState;
 begin
-  if ParamCount > 0 then
-    TurpFilePath := ParamStr(1)
-  else
+  Machine.Head := 0;
+  Machine.State := 'BEGIN';
+
+  I := 1;
+  while I <= ParamCount do
   begin
-    WriteLn(StdErr, 'Error: Input turp file is not provided');
-    WriteLn(StdErr, 'Usage: turp <input.turp> <input.tape>');
+    case ParamStr(I) of
+      '--help', '-h':
+      begin
+        Usage(StdOut);
+        Halt;
+      end;
+      '--state', '-s':
+      begin
+        Inc(I);
+        ExpectArgument;
+        Machine.State := ParamStr(I);
+      end;
+      '--head', '-p':
+      begin
+        Inc(I);
+        ExpectArgument;
+        Machine.Head := StrToInt(ParamStr(I));
+      end;
+    else
+      if ParamStr(I)[1] = '-' then
+      begin
+        Usage(StdErr);
+        WriteLn(StdErr, 'ERROR: Unknown flag `', ParamStr(I), '`');
+        Halt(1);
+      end
+      else
+        Insert(ParamStr(I), Positionals, High(Positionals));
+    end;
+    Inc(I);
+  end;
+
+  if Length(Positionals) < 2 then
+  begin
+    Usage(StdErr);
+    WriteLn(StdErr, 'ERROR: Missing required positional arguments');
     Halt(1);
   end;
 
-  if ParamCount > 1 then
-    TapeFilePath := ParamStr(2)
-  else
-  begin
-    WriteLn(StdErr, 'Error: Input tape file is not provided');
-    WriteLn(StdErr, 'Usage: turp <input.turp> <input.tape>');
-    Halt(1);
-  end;
+  TurpFilePath := Positionals[1];
+  TapeFilePath := Positionals[0];
 
-  Lines := ReadLines(TurpFilePath);
-  for I := 0 to High(Lines) do
+  TurpLines := ReadLines(TurpFilePath);
+  for I := 0 to High(TurpLines) do
   begin
-    Line := Trim(Lines[I]);
-    if (Length(Line) > 0) and (Line[Low(Line)] <> '!') then
-      Insert(ParseTurp(TurpFilePath, I + 1, Line), Turps, Length(Turps));
+    TurpLine := Trim(TurpLines[I]);
+    if (Length(TurpLine) > 0) and (TurpLine[Low(TurpLine)] <> '!') then
+      Insert(ParseTurp(TurpFilePath, I + 1, TurpLine), Turps, Length(Turps));
   end;
 
   Machine.Tape := ReadTokens(TapeFilePath);
-
-  WriteLn('AVAILABLE STATES:');
-  for State in GetTurpsStates(Turps) do
-    WriteLn('  ' + State);
-
-  Write('INITIAL STATE: ');
-  ReadLn(Input, State);
-  Machine.State := UpCase(State);
 
   repeat
     MachineDump(Machine);
