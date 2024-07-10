@@ -24,7 +24,9 @@ type
   TStep = (Left, Right);
 
   TState = AnsiString;
+  TStateArray = array of TState;
   TSymbol = AnsiString;
+  TSymbolArray = array of TSymbol;
 
   TTurp = record
     Current : TState;
@@ -34,10 +36,8 @@ type
     Next    : TState;
   end;
 
-  TTape = TStringDynArray;
-
   TMachine = record
-    Tape : TTape;
+    Tape : TSymbolArray;
     Head : LongWord;
     State : TState;
   end;
@@ -102,7 +102,7 @@ begin
     Halt(1);
   end;
 
-  ParseTurp.Current := Tokens[CURRENT];
+  ParseTurp.Current := UpCase(Tokens[CURRENT]);
   ParseTurp.Read := Tokens[READ];
   ParseTurp.Write := Tokens[WRITE];
   case Tokens[STEP] of
@@ -111,7 +111,34 @@ begin
   else
     WriteLn(StdErr, Format('%s:%d: Error: "%s" is not a correct step. Expected "L" or "R"', [FilePath, Line, Tokens[STEP]]));
   end;
-  ParseTurp.Next := Tokens[NEXT];
+  ParseTurp.Next := UpCase(Tokens[NEXT]);
+end;
+
+function StringDynArrayContains(Arr: TStringDynArray; Value: AnsiString): Boolean;
+var
+  Item : AnsiString;
+begin
+  for Item in Arr do
+    if Item = Value then
+    begin
+      Exit(True);
+    end;
+  StringDynArrayContains := False;
+end;
+
+function GetTurpsStates(Turps: array of TTurp): TStateArray;
+var
+  Result : TStateArray = ();
+  Turp : TTurp;
+begin
+  for Turp in Turps do
+  begin
+    if not StringDynArrayContains(Result, Turp.Current) then
+      Insert(Turp.Current, Result, Length(Result));
+    if not StringDynArrayContains(Result, Turp.Next) then
+      Insert(Turp.Next, Result, Length(Result));
+  end;
+  GetTurpsStates := Result;
 end;
 
 function ReadLines(FilePath: AnsiString): TStringDynArray;
@@ -174,6 +201,7 @@ var
   Turps : array of TTurp = ();
 
   Machine : TMachine;
+  State : TState;
 begin
   if ParamCount = 0 then
   begin
@@ -201,8 +229,13 @@ begin
 
   Machine.Tape := ReadTokens(TapeFilePath);
 
+  WriteLn('AVAILABLE STATES:');
+  for State in GetTurpsStates(Turps) do
+    WriteLn('  ' + State);
+
   Write('INITIAL STATE: ');
-  ReadLn(Input, Machine.State);
+  ReadLn(Input, State);
+  Machine.State := UpCase(State);
 
   repeat
     MachineDump(Machine);
