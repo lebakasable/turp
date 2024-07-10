@@ -47,21 +47,27 @@ begin
   MachineNext := False;
 end;
 
-procedure MachineDump(Machine: TMachine);
+procedure MachineDumpTape(Machine: TMachine);
 var
   Cell : TSymbol;
-  I, J : LongWord;
 begin
-  WriteLn('STATE: ', Machine.State);
   for Cell in Machine.Tape do
   begin
     Write(Cell, ' ');
   end;
   WriteLn;
+end;
+
+procedure MachineDebugDump(Machine: TMachine);
+var
+  I, J : LongWord;
+begin
+  WriteLn('STATE: ', Machine.State);
+  MachineDumpTape(Machine);
   for I := 0 to High(Machine.Tape) do
   begin
     if I = Machine.Head then Write('^');
-    for J := 0 to Length(Cell) - 1 do
+    for J := 0 to High(Machine.Tape[I]) do
       Write(' ');
     if I <> Machine.Head then Write(' ');
   end;
@@ -168,19 +174,20 @@ begin
   WriteLn(Out, '  --help|-h             Print this help to stdout and exit with 0 exit code');
   WriteLn(Out, '  --state|-s [STATE]    Start from a specific initial state (default: BEGIN)');
   WriteLn(Out, '  --head|-p [POSITION]  Start from a specific head position (default: 0)');
+  WriteLn(Out, '  --non-interactively   Execute the program non-interactively');
 end;
 
 var
-  I : LongWord;
+  ArgsIndex : LongWord;
+  NonInteractively : Boolean = False;
   Positionals : TStringDynArray = ();
-  Machine : TMachine;
 
   procedure ExpectArgument;
   begin
-    if I > ParamCount then
+    if ArgsIndex > ParamCount then
     begin
       Usage(StdErr);
-      WriteLn(StdErr, 'ERROR: No argument provided for flag `', ParamStr(I - 1), '`');
+      WriteLn(StdErr, 'ERROR: No argument provided for flag `', ParamStr(ArgsIndex - 1), '`');
       Halt(1);
     end;
   end;
@@ -189,18 +196,20 @@ var
   TurpFilePath : AnsiString;
   TapeFilePath : AnsiString;
 
+  I : LongWord;
   TurpLines : TStringDynArray;
   TurpLine : AnsiString;
 
   Turps : array of TTurp = ();
+  Machine : TMachine;
 begin
   Machine.Head := 0;
   Machine.State := 'BEGIN';
 
-  I := 1;
-  while I <= ParamCount do
+  ArgsIndex := 1;
+  while ArgsIndex <= ParamCount do
   begin
-    case ParamStr(I) of
+    case ParamStr(ArgsIndex) of
       '--help', '-h':
       begin
         Usage(StdOut);
@@ -208,27 +217,29 @@ begin
       end;
       '--state', '-s':
       begin
-        Inc(I);
+        Inc(ArgsIndex);
         ExpectArgument;
-        Machine.State := ParamStr(I);
+        Machine.State := ParamStr(ArgsIndex);
       end;
       '--head', '-p':
       begin
-        Inc(I);
+        Inc(ArgsIndex);
         ExpectArgument;
-        Machine.Head := StrToInt(ParamStr(I));
+        Machine.Head := StrToInt(ParamStr(ArgsIndex));
       end;
+      '--non-interactively':
+        NonInteractively := True;
     else
-      if ParamStr(I)[1] = '-' then
+      if ParamStr(ArgsIndex)[1] = '-' then
       begin
         Usage(StdErr);
-        WriteLn(StdErr, 'ERROR: Unknown flag `', ParamStr(I), '`');
+        WriteLn(StdErr, 'ERROR: Unknown flag `', ParamStr(ArgsIndex), '`');
         Halt(1);
       end
       else
-        Insert(ParamStr(I), Positionals, High(Positionals));
+        Insert(ParamStr(ArgsIndex), Positionals, High(Positionals));
     end;
-    Inc(I);
+    Inc(ArgsIndex);
   end;
 
   if Length(Positionals) < 2 then
@@ -251,8 +262,14 @@ begin
 
   Machine.Tape := ReadTokens(TapeFilePath);
 
-  repeat
-    MachineDump(Machine);
-    ReadLn(Input);
-  until not MachineNext(Machine, Turps);
+  if NonInteractively then
+  begin
+    while MachineNext(Machine, Turps) do begin end;
+    MachineDumpTape(Machine);
+  end
+  else
+    repeat
+      MachineDebugDump(Machine);
+      ReadLn(Input);
+    until not MachineNext(Machine, Turps);
 end.
