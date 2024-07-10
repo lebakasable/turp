@@ -1,275 +1,378 @@
 uses
-  SysUtils,
-  StrUtils,
-  Types;
+  SysUtils;
 
 type
-  TStep = (Left, Right);
-
-  TState = AnsiString;
-  TSymbol = AnsiString;
-  TSymbolArray = array of TSymbol;
-
-  TTurp = record
-    Current : TState;
-    Read    : TSymbol;
-    Write   : TSymbol;
-    Step    : TStep;
-    Next    : TState;
+  TLoc = record
+    FilePath : AnsiString;
+    Row, Col : LongWord;
   end;
+
+function LocToStr(const Loc: TLoc): AnsiString;
+begin
+  LocToStr := Format('%s:%d:%d', [Loc.FilePath, Loc.Row, Loc.Col]);
+end;
+
+type
+  PSymbol = ^TSymbol;
+  TSymbol = record
+    Name : AnsiString;
+    Loc : TLoc;
+  end;
+  TSymbolArray = Array of TSymbol;
+  
+  TLexer = record
+    Source : AnsiString;
+    FilePath : AnsiString;
+    Pos : LongWord;
+    Bol : LongWord;
+    Row : LongWord;
+    Peek : PSymbol;
+  end;
+
+function CreateLexer(const Source, FilePath: AnsiString): TLexer;
+begin
+  CreateLexer.Source := Source;
+  CreateLexer.FilePath := FilePath;
+  with CreateLexer do
+  begin
+    Pos := 0;
+    Bol := 0;
+    Row := 0;
+    Peek := nil;
+  end;
+end;
+
+function LexerLoc(const Lexer: TLexer): TLoc;
+begin
+  with LexerLoc do
+  begin
+    FilePath := Lexer.FilePath;
+    Row := Lexer.Row + 1;
+    Col := Lexer.Pos - Lexer.Bol + 1;
+  end;
+end;
+
+procedure LexerAdvanceLoc(var Lexer: TLexer; const SkippedChar: Char);
+begin
+  Inc(Lexer.Pos);
+  if SkippedChar = LineEnding then
+  begin
+    Lexer.Bol := Lexer.Pos;
+    Inc(Lexer.Row);
+  end;
+end;
+
+function StripPrefix(const Prefix, Str: AnsiString): AnsiString;
+begin
+  if Pos(Prefix, Str) = 1 then
+    StripPrefix := Copy(Str, Length(Prefix) + 1, Length(Str) - Length(Prefix))
+  else
+    StripPrefix := Str;
+end;
+
+function LexerStripPrefix(var Lexer: TLexer; const Prefix: AnsiString): Boolean;
+var
+  Source : AnsiString;
+  C : Char;
+begin
+  Source := StripPrefix(Prefix, Lexer.Source);
+  if Source <> Lexer.Source then
+  begin
+    for C in Prefix do
+      LexerAdvanceLoc(Lexer, C);
+    Lexer.Source := Source;
+    LexerStripPrefix := True;
+  end
+  else
+    LexerStripPrefix := False;
+end;
+
+type
+  TCharPredicate = function(const C: Char): Boolean;
+
+function LexerStripWhile(var Lexer: TLexer; const Skip: TCharPredicate): AnsiString;
+var
+  I, EndPos : LongWord;
+begin
+  EndPos := 1;
+  for I := 1 to Length(Lexer.Source) do
+  begin
+    if Skip(Lexer.Source[I]) then
+      Inc(EndPos)
+    else
+      Break;
+  end;
+
+  LexerStripWhile := Copy(Lexer.Source, 1, EndPos - 1);
+  Lexer.Source := Copy(Lexer.Source, EndPos, Length(Lexer.Source) - EndPos + 1);
+end;
+
+function IsSpace(const C: Char): Boolean;
+begin
+  IsSpace := C in [' ', #9, #10, #13];
+end;
+
+function IsNotSpace(const C: Char): Boolean;
+begin
+  IsNotSpace := not IsSpace(C);
+end;
+
+function LexerChopSymbol(var Lexer: TLexer): PSymbol;
+var
+  Loc : TLoc;
+
+  Special : Array of AnsiString = ('(', ')', '{', '}', ':');
+  Name : AnsiString;
+begin
+  LexerStripWhile(Lexer, @IsSpace);
+
+  if Length(Lexer.Source) = 0 then
+    Exit(nil);
+
+  Loc := LexerLoc(Lexer);
+
+  New(LexerChopSymbol);
+
+  for Name in Special do
+    if LexerStripPrefix(Lexer, Name) then
+    begin
+      LexerChopSymbol^.Name := Name;
+      LexerChopSymbol^.Loc := Loc;
+      Exit(LexerChopSymbol);
+    end;
+
+  LexerChopSymbol^.Name := LexerStripWhile(Lexer, @IsNotSpace);
+  LexerChopSymbol^.Loc := Loc;
+end;
+
+function LexerNextSymbol(var Lexer: TLexer): PSymbol;
+begin
+  if Lexer.Peek <> nil then
+  begin
+    LexerNextSymbol := Lexer.Peek;
+    Lexer.Peek := nil;
+  end
+  else
+    LexerNextSymbol := LexerChopSymbol(Lexer);
+end;
+
+function LexerPeekSymbol(var Lexer: TLexer): PSymbol;
+begin
+  if Lexer.Peek = nil then
+    Lexer.Peek := LexerChopSymbol(Lexer);
+  LexerPeekSymbol := Lexer.Peek;
+end;
+
+type
+  TCase = record
+    State : TSymbol;
+    Read  : TSymbol;
+    Write : TSymbol;
+    Step  : TSymbol;
+    Next  : TSymbol;
+  end;
+  TCaseArray = Array of TCase;
 
   TMachine = record
-    Tape : TSymbolArray;
-    Head : LongWord;
-    State : TState;
+    State       : TSymbol;
+    Tape        : TSymbolArray;
+    TapeDefault : TSymbol;
+    Head        : LongWord;
+    Halt        : Boolean;
   end;
 
-function MachineNext(var Machine: TMachine; const Turps: array of TTurp): Boolean;
+procedure MachineNext(var Machine: TMachine; const Cases: TCaseArray);
 var
-  Turp : TTurp;
+  Case_ : TCase;
 begin
-  for Turp in Turps do
-    if (Turp.Current = Machine.State) and (Turp.Read = Machine.Tape[Machine.Head]) then
+  for Case_ in Cases do
+    if (Case_.State.Name = Machine.State.Name) and (Case_.Read.Name = Machine.Tape[Machine.Head].Name) then
     begin
-      Machine.Tape[Machine.Head] := Turp.Write;
-      case Turp.Step of
-        Left:
+      Machine.Tape[Machine.Head] := Case_.Write;
+      case Case_.Step.Name of
+        '<-':
+        begin
           if Machine.Head = 0 then
-            Machine.Head := High(Machine.Tape)
-          else
-            Dec(Machine.Head);
-        Right:
-          Machine.Head := (Machine.Head + 1) mod Length(Machine.Tape);
+          begin
+            WriteLn(StdErr, LocToStr(Case_.Step.Loc), ': ERROR: Tape underflow');
+            Halt(1);
+          end;
+          Dec(Machine.Head);
+        end;
+        '->':
+        begin
+          Inc(Machine.Head);
+          if Machine.Head >= Length(Machine.Tape) then
+            Insert(Machine.TapeDefault, Machine.Tape, Length(Machine.Tape));
+        end;
       end;
-      Machine.State := Turp.Next;
-      Exit(True);
+      Machine.State := Case_.Next;
+      Machine.Halt := False;
+      Exit;
     end;
-  MachineNext := False;
 end;
 
-procedure MachineDumpTape(Machine: TMachine);
+procedure MachinePrint(const Machine: TMachine);
 var
-  Cell : TSymbol;
-begin
-  for Cell in Machine.Tape do
-  begin
-    Write(Cell, ' ');
-  end;
-  WriteLn;
-end;
-
-procedure MachineDebugDump(Machine: TMachine);
-var
-  I, J : LongWord;
-begin
-  WriteLn('STATE: ', Machine.State);
-  MachineDumpTape(Machine);
-  for I := 0 to High(Machine.Tape) do
-  begin
-    if I = Machine.Head then Write('^');
-    for J := 0 to High(Machine.Tape[I]) do
-      Write(' ');
-    if I <> Machine.Head then Write(' ');
-  end;
-end;
-
-function Tokenize(const Source: AnsiString): TStringDynArray;
-var
-  Tokens : TStringDynArray = ();
-  Words : TStringDynArray;
-  Word : AnsiString;
+  Buffer : AnsiString;
+  Head : LongWord;
   I : LongWord;
 begin
-  Words := SplitString(Source, ' ');
-  for I := 0 to High(Words) do
+  Buffer := Machine.State.Name + ': ';
+  for I := 0 to High(Machine.Tape) do
   begin
-    Word := Trim(Words[I]);
-    if Length(Word) > 0 then
-      Insert(Word, Tokens, Length(Tokens));
+    if I = Machine.Head then
+      Head := Length(Buffer);
+    Buffer := Buffer + Machine.Tape[I].Name + ' ';
   end;
-  Tokenize := Tokens;
+  WriteLn(Buffer);
+  for I := 0 to Head do Write(' ');
+  WriteLn('^');
 end;
 
-function ParseTurp(const FilePath: AnsiString; const Line: LongWord; const Source: AnsiString): TTurp;
-const
-  CURRENT : Word = 0;
-  READ    : Word = 1;
-  WRITE   : Word = 2;
-  STEP    : Word = 3;
-  NEXT    : Word = 4;
+function ParseSymbol(var Lexer: TLexer): TSymbol;
 var
-  Tokens : TStringDynArray;
+  Symbol : PSymbol;
 begin
-  Tokens := Tokenize(Source);
-  if Length(Tokens) <> 5 then
+  Symbol := LexerNextSymbol(Lexer);
+  if Symbol <> nil then
+    ParseSymbol := Symbol^
+  else
   begin
-    WriteLn(StdErr, Format('%s:%d: ERROR: A single turp is expected to have 5 tokens', [FilePath, Line]));
+    WriteLn(StdErr, LocToStr(LexerLoc(Lexer)), ': ERROR: Expected symbol but reached the end of the input');
     Halt(1);
   end;
-
-  ParseTurp.Current := UpCase(Tokens[CURRENT]);
-  ParseTurp.Read := Tokens[READ];
-  ParseTurp.Write := Tokens[WRITE];
-  case Tokens[STEP] of
-    'L': ParseTurp.Step := Left;
-    'R': ParseTurp.Step := Right;
-  else
-    WriteLn(StdErr, Format('%s:%d: ERROR: "%s" is not a correct step. Expected "L" or "R"', [FilePath, Line, Tokens[STEP]]));
-  end;
-  ParseTurp.Next := UpCase(Tokens[NEXT]);
 end;
 
-function ReadLines(const FilePath: AnsiString): TStringDynArray;
+function ParseStep(var Lexer: TLexer): TSymbol;
 var
-  FileHandle : Text;
-  Result : TStringDynArray = ();
-  Line : AnsiString;
+  Symbol : TSymbol;
+begin
+  Symbol := ParseSymbol(Lexer);
+  case Symbol.Name of
+    '->', '<-': ParseStep := Symbol;
+  else
+    WriteLn(StdErr, LocToStr(Symbol.Loc), ': ERROR: Expected -> or <- but got ', Symbol.Name);
+    Halt(1);
+  end;
+end;
+
+function ParseCase(var Lexer: TLexer): TCase;
+begin
+  with ParseCase do
+  begin
+    State := ParseSymbol(Lexer);
+    Read  := ParseSymbol(Lexer);
+    Write := ParseSymbol(Lexer);
+    Step  := ParseStep(Lexer);
+    Next  := ParseSymbol(Lexer);
+  end;
+end;
+
+function ParseCases(var Lexer: TLexer): TCaseArray;
+var
+  Cases : TCaseArray = ();
+begin
+  while LexerPeekSymbol(Lexer) <> nil do
+    Insert(ParseCase(Lexer), Cases, Length(Cases));
+  ParseCases := Cases;
+end;
+
+function ParseTape(var Lexer: TLexer): TSymbolArray;
+var
+  Tape : TSymbolArray = ();
+begin
+  while LexerPeekSymbol(Lexer) <> nil do
+    Insert(ParseSymbol(Lexer), Tape, Length(Tape));
+  ParseTape := Tape;
+end;
+
+function SlurpFile(const FilePath: AnsiString): AnsiString;
+var
+  FileHandle : TextFile;
+  Line : String;
 begin
   Assign(FileHandle, FilePath);
-  {$I-}
   Reset(FileHandle);
-  {$I+}
-  if IOResult <> 0 then
-  begin
-    WriteLn(StdErr, 'ERROR: Could not open file "', FilePath, '"');
-    Halt(1);
-  end;
 
+  SlurpFile := '';
   while not Eof(FileHandle) do
   begin
     ReadLn(FileHandle, Line);
-    Insert(Line, Result, Length(Result));
+    SlurpFile := SlurpFile + Line + LineEnding;
   end;
 
   Close(FileHandle);
-  ReadLines := Result;
-end;
 
-function ReadTokens(const FilePath: AnsiString): TStringDynArray;
-var
-  Tokens : TStringDynArray = ();
-  Lines : TStringDynArray;
-  Line : AnsiString;
-  LineTokens : TStringDynArray;
-  I, J : LongWord;
-begin
-  Lines := ReadLines(FilePath);
-  for I := 0 to High(Lines) do
-  begin
-    Line := Trim(Lines[I]);
-    if Length(Line) > 0 then
-    begin
-      LineTokens := Tokenize(Line);
-      for J := 0 to High(LineTokens) do
-        Insert(LineTokens[J], Tokens, Length(Tokens));
-    end;
-  end;
-  ReadTokens := Tokens;
+  if Length(SlurpFile) > 0 then
+    SetLength(SlurpFile, Length(SlurpFile) - Length(LineEnding));
 end;
 
 procedure Usage(var Out: Text);
 begin
-  WriteLn(Out, 'Usage: turp [OPTIONS] <input.turp> <input.tape>');
-  WriteLn(Out, 'OPTIONS:');
-  WriteLn(Out, '  --help|-h             Print this help to stdout and exit with 0 exit code');
-  WriteLn(Out, '  --state|-s [STATE]    Start from a specific initial state (default: BEGIN)');
-  WriteLn(Out, '  --head|-p [POSITION]  Start from a specific head position (default: 0)');
-  WriteLn(Out, '  --non-interactively   Execute the program non-interactively');
+  WriteLn(Out, 'Usage: turp <input.turp> <input.tape>');
 end;
 
 var
-  ArgsIndex : LongWord;
-  NonInteractively : Boolean = False;
-  Positionals : TStringDynArray = ();
+  TurpPath, TapePath : AnsiString;
+  TurpSource, TapeSource : AnsiString;
+  TurpLexer, TapeLexer : TLexer;
 
-  procedure ExpectArgument;
-  begin
-    if ArgsIndex > ParamCount then
-    begin
-      Usage(StdErr);
-      WriteLn(StdErr, 'ERROR: No argument provided for flag `', ParamStr(ArgsIndex - 1), '`');
-      Halt(1);
-    end;
-  end;
+  Cases : TCaseArray;
+  Tape : TSymbolArray;
 
-var
-  TurpFilePath : AnsiString;
-  TapeFilePath : AnsiString;
+  State, TapeDefault : TSymbol;
 
-  I : LongWord;
-  TurpLines : TStringDynArray;
-  TurpLine : AnsiString;
-
-  Turps : array of TTurp = ();
   Machine : TMachine;
 begin
-  Machine.Head := 0;
-  Machine.State := 'BEGIN';
-
-  ArgsIndex := 1;
-  while ArgsIndex <= ParamCount do
-  begin
-    case ParamStr(ArgsIndex) of
-      '--help', '-h':
-      begin
-        Usage(StdOut);
-        Halt;
-      end;
-      '--state', '-s':
-      begin
-        Inc(ArgsIndex);
-        ExpectArgument;
-        Machine.State := ParamStr(ArgsIndex);
-      end;
-      '--head', '-p':
-      begin
-        Inc(ArgsIndex);
-        ExpectArgument;
-        Machine.Head := StrToInt(ParamStr(ArgsIndex));
-      end;
-      '--non-interactively':
-        NonInteractively := True;
-    else
-      if ParamStr(ArgsIndex)[1] = '-' then
-      begin
-        Usage(StdErr);
-        WriteLn(StdErr, 'ERROR: Unknown flag `', ParamStr(ArgsIndex), '`');
-        Halt(1);
-      end
-      else
-        Insert(ParamStr(ArgsIndex), Positionals, High(Positionals));
-    end;
-    Inc(ArgsIndex);
-  end;
-
-  if Length(Positionals) < 2 then
+  if ParamCount = 0 then
   begin
     Usage(StdErr);
-    WriteLn(StdErr, 'ERROR: Missing required positional arguments');
+    WriteLn(StdErr, 'ERROR: No input.turp is provided');
+    Halt(1);
+  end;
+  TurpPath := ParamStr(1);
+
+  if ParamCount = 1 then
+  begin
+    Usage(StdErr);
+    WriteLn(StdErr, 'ERROR: No input.tape is provided');
+    Halt(1);
+  end;
+  TapePath := ParamStr(2);
+
+  TurpSource := SlurpFile(TurpPath);
+  TurpLexer := CreateLexer(TurpSource, TurpPath);
+  Cases := ParseCases(TurpLexer);
+
+  if Length(Cases) > 0 then
+    State := Cases[0].State
+  else
+  begin
+    WriteLn(StdErr, 'ERROR: The turp file must at least contain one case');
     Halt(1);
   end;
 
-  TurpFilePath := Positionals[1];
-  TapeFilePath := Positionals[0];
+  TapeSource := SlurpFile(TapePath);
+  TapeLexer := CreateLexer(TapeSource, TapePath);
+  Tape := ParseTape(TapeLexer);
 
-  TurpLines := ReadLines(TurpFilePath);
-  for I := 0 to High(TurpLines) do
+  if Length(Tape) > 0 then
+    TapeDefault := Tape[High(Tape)]
+  else
   begin
-    TurpLine := Trim(TurpLines[I]);
-    if (Length(TurpLine) > 0) and (TurpLine[Low(TurpLine)] <> '!') then
-      Insert(ParseTurp(TurpFilePath, I + 1, TurpLine), Turps, Length(Turps));
+    WriteLn(StdErr, 'ERROR: The tape file must at least contain one symbol');
+    Halt(1);
   end;
 
-  Machine.Tape := ReadTokens(TapeFilePath);
+  Machine.State := State;
+  Machine.Tape := Tape;
+  Machine.TapeDefault := TapeDefault;
 
-  if NonInteractively then
+  while not Machine.Halt do
   begin
-    while MachineNext(Machine, Turps) do begin end;
-    MachineDumpTape(Machine);
-  end
-  else
-    repeat
-      MachineDebugDump(Machine);
-      ReadLn(Input);
-    until not MachineNext(Machine, Turps);
+    MachinePrint(Machine);
+    Machine.Halt := True;
+    MachineNext(Machine, Cases);
+  end;
 end.
