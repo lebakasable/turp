@@ -24,7 +24,7 @@ type
     State : TState;
   end;
 
-function MachineNext(var Machine: TMachine; Turps: array of TTurp): Boolean;
+function MachineNext(var Machine: TMachine; const Turps: array of TTurp): Boolean;
 var
   Turp : TTurp;
 begin
@@ -73,7 +73,7 @@ begin
   end;
 end;
 
-function Tokenize(Source: AnsiString): TStringDynArray;
+function Tokenize(const Source: AnsiString): TStringDynArray;
 var
   Tokens : TStringDynArray = ();
   Words : TStringDynArray;
@@ -90,7 +90,7 @@ begin
   Tokenize := Tokens;
 end;
 
-function ParseTurp(FilePath: AnsiString; Line: LongWord; Source: AnsiString): TTurp;
+function ParseTurp(const FilePath: AnsiString; const Line: LongWord; const Source: AnsiString): TTurp;
 const
   CURRENT : Word = 0;
   READ    : Word = 1;
@@ -119,7 +119,7 @@ begin
   ParseTurp.Next := UpCase(Tokens[NEXT]);
 end;
 
-function ReadLines(FilePath: AnsiString): TStringDynArray;
+function ReadLines(const FilePath: AnsiString): TStringDynArray;
 var
   FileHandle : Text;
   Result : TStringDynArray = ();
@@ -145,7 +145,7 @@ begin
   ReadLines := Result;
 end;
 
-function ReadTokens(FilePath: AnsiString): TStringDynArray;
+function ReadTokens(const FilePath: AnsiString): TStringDynArray;
 var
   Tokens : TStringDynArray = ();
   Lines : TStringDynArray;
