@@ -3,12 +3,28 @@ uses
   StrUtils,
   Types;
 
+function Tokenize(Source: AnsiString): TStringDynArray;
+var
+  Result : TStringDynArray = ();
+  Tokens : TStringDynArray;
+  Token : AnsiString;
+  I : LongWord;
+begin
+  Tokens := SplitString(Source, ' ');
+  for I := 0 to High(Tokens) do
+  begin
+    Token := Trim(Tokens[I]);
+    if Length(Token) > 0 then
+      Insert(Token, Result, Length(Result));
+  end;
+  Tokenize := Result;
+end;
+
 type
   TStep = (Left, Right);
 
   TState = AnsiString;
   TSymbol = AnsiString;
-  TSymbolDynArray = TStringDynArray;
 
   TTurp = record
     Current : TState;
@@ -18,8 +34,10 @@ type
     Next    : TState;
   end;
 
+  TTape = TStringDynArray;
+
   TMachine = record
-    Tape : TSymbolDynArray;
+    Tape : TTape;
     Head : LongWord;
     State : TState;
   end;
@@ -67,7 +85,7 @@ begin
   end;
 end;
 
-function ReadTurp(FilePath: AnsiString; Line: LongWord; Source: AnsiString): TTurp;
+function ParseTurp(FilePath: AnsiString; Line: LongWord; Source: AnsiString): TTurp;
 const
   CURRENT : Word = 0;
   READ    : Word = 1;
@@ -77,28 +95,29 @@ const
 var
   Tokens : TStringDynArray;
 begin
-  Tokens := SplitString(Source, ' ');
+  Tokens := Tokenize(Source);
   if Length(Tokens) <> 5 then
   begin
     WriteLn(StdErr, Format('%s:%d: Error: A single turp is expected to have 5 tokens', [FilePath, Line]));
     Halt(1);
   end;
 
-  ReadTurp.Current := Tokens[CURRENT];
-  ReadTurp.Read := Tokens[READ];
-  ReadTurp.Write := Tokens[WRITE];
+  ParseTurp.Current := Tokens[CURRENT];
+  ParseTurp.Read := Tokens[READ];
+  ParseTurp.Write := Tokens[WRITE];
   case Tokens[STEP] of
-    'L': ReadTurp.Step := Left;
-    'R': ReadTurp.Step := Right;
+    'L': ParseTurp.Step := Left;
+    'R': ParseTurp.Step := Right;
   else
     WriteLn(StdErr, Format('%s:%d: Error: "%s" is not a correct step. Expected "L" or "R"', [FilePath, Line, Tokens[STEP]]));
   end;
-  ReadTurp.Next := Tokens[NEXT];
+  ParseTurp.Next := Tokens[NEXT];
 end;
 
-function SlurpFile(FilePath: AnsiString): AnsiString;
+function ReadLines(FilePath: AnsiString): TStringDynArray;
 var
   FileHandle : Text;
+  Result : TStringDynArray = ();
   Line : AnsiString;
 begin
   Assign(FileHandle, FilePath);
@@ -111,18 +130,36 @@ begin
     Halt(1);
   end;
 
-  SlurpFile := '';
-
   while not Eof(FileHandle) do
   begin
     ReadLn(FileHandle, Line);
-    SlurpFile := SlurpFile + Line + LineEnding;
+    Insert(Line, Result, Length(Result));
   end;
 
-  if Length(SlurpFile) > 0 then
-    SetLength(SlurpFile, Length(SlurpFile) - Length(LineEnding));
-
   Close(FileHandle);
+  ReadLines := Result;
+end;
+
+function ReadTokens(FilePath: AnsiString): TStringDynArray;
+var
+  Result : TStringDynArray = ();
+  Lines : TStringDynArray;
+  Line : AnsiString;
+  Tokens : TStringDynArray;
+  I, J : LongWord;
+begin
+  Lines := ReadLines(FilePath);
+  for I := 0 to High(Lines) do
+  begin
+    Line := Trim(Lines[I]);
+    if Length(Line) > 0 then
+    begin
+      Tokens := Tokenize(Line);
+      for J := 0 to High(Tokens) do
+        Insert(Tokens[J], Result, Length(Result));
+    end;
+  end;
+  ReadTokens := Result;
 end;
 
 var
@@ -154,15 +191,15 @@ begin
   end;
   TapeFilePath := ParamStr(2);
 
-  Lines := SplitString(SlurpFile(TurpFilePath), LineEnding);
+  Lines := ReadLines(TurpFilePath);
   for I := 0 to High(Lines) do
   begin
     Line := Trim(Lines[I]);
     if Length(Line) > 0 then
-      Insert(ReadTurp(TurpFilePath, I + 1, Line), Turps, Length(Turps));
+      Insert(ParseTurp(TurpFilePath, I + 1, Line), Turps, Length(Turps));
   end;
 
-  Machine.Tape := SplitString(SlurpFile(TapeFilePath), ' ');
+  Machine.Tape := ReadTokens(TapeFilePath);
 
   Write('INITIAL STATE: ');
   ReadLn(Input, Machine.State);
