@@ -6,8 +6,8 @@ uses
 type
   TStep = (Left, Right);
 
-  TState = String;
-  TSymbol = String;
+  TState = AnsiString;
+  TSymbol = AnsiString;
   TSymbolDynArray = TStringDynArray;
 
   TTurp = record
@@ -67,7 +67,7 @@ begin
   end;
 end;
 
-function ReadTurp(FilePath: String; Line: LongWord; Source: String): TTurp;
+function ReadTurp(FilePath: AnsiString; Line: LongWord; Source: AnsiString): TTurp;
 const
   CURRENT : Word = 0;
   READ    : Word = 1;
@@ -96,10 +96,10 @@ begin
   ReadTurp.Next := Tokens[NEXT];
 end;
 
-function SlurpFile(FilePath: String): String;
+function SlurpFile(FilePath: AnsiString): AnsiString;
 var
   FileHandle : Text;
-  Line : String;
+  Line : AnsiString;
 begin
   Assign(FileHandle, FilePath);
   {$I-}
@@ -128,11 +128,11 @@ end;
 var
   I : LongWord;
 
-  TurpFilePath : String;
-  TapeFilePath : String;
+  TurpFilePath : AnsiString;
+  TapeFilePath : AnsiString;
 
-  Lines : TStringArray;
-  Line : String;
+  Lines : TStringDynArray;
+  Line : AnsiString;
 
   Turps : array of TTurp = ();
 
