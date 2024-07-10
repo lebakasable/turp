@@ -3,23 +3,6 @@ uses
   StrUtils,
   Types;
 
-function Tokenize(Source: AnsiString): TStringDynArray;
-var
-  Result : TStringDynArray = ();
-  Tokens : TStringDynArray;
-  Token : AnsiString;
-  I : LongWord;
-begin
-  Tokens := SplitString(Source, ' ');
-  for I := 0 to High(Tokens) do
-  begin
-    Token := Trim(Tokens[I]);
-    if Length(Token) > 0 then
-      Insert(Token, Result, Length(Result));
-  end;
-  Tokenize := Result;
-end;
-
 type
   TStep = (Left, Right);
 
@@ -85,6 +68,23 @@ begin
   end;
 end;
 
+function Tokenize(Source: AnsiString): TStringDynArray;
+var
+  Tokens : TStringDynArray = ();
+  Words : TStringDynArray;
+  Word : AnsiString;
+  I : LongWord;
+begin
+  Words := SplitString(Source, ' ');
+  for I := 0 to High(Words) do
+  begin
+    Word := Trim(Words[I]);
+    if Length(Word) > 0 then
+      Insert(Word, Tokens, Length(Tokens));
+  end;
+  Tokenize := Tokens;
+end;
+
 function ParseTurp(FilePath: AnsiString; Line: LongWord; Source: AnsiString): TTurp;
 const
   CURRENT : Word = 0;
@@ -114,31 +114,29 @@ begin
   ParseTurp.Next := UpCase(Tokens[NEXT]);
 end;
 
-function StringDynArrayContains(Arr: TStringDynArray; Value: AnsiString): Boolean;
-var
-  Item : AnsiString;
-begin
-  for Item in Arr do
-    if Item = Value then
-    begin
-      Exit(True);
-    end;
-  StringDynArrayContains := False;
-end;
-
 function GetTurpsStates(Turps: array of TTurp): TStateArray;
 var
-  Result : TStateArray = ();
+  States : TStateArray = ();
   Turp : TTurp;
+
+  function StatesContains(Needle: TState): Boolean;
+  var
+    State : TState;
+  begin
+    for State in States do
+      if State = Needle then
+        Exit(True);
+    StatesContains := False;
+  end;
 begin
   for Turp in Turps do
   begin
-    if not StringDynArrayContains(Result, Turp.Current) then
-      Insert(Turp.Current, Result, Length(Result));
-    if not StringDynArrayContains(Result, Turp.Next) then
-      Insert(Turp.Next, Result, Length(Result));
+    if not StatesContains(Turp.Current) then
+      Insert(Turp.Current, States, Length(States));
+    if not StatesContains(Turp.Next) then
+      Insert(Turp.Next, States, Length(States));
   end;
-  GetTurpsStates := Result;
+  GetTurpsStates := States;
 end;
 
 function ReadLines(FilePath: AnsiString): TStringDynArray;
@@ -169,10 +167,10 @@ end;
 
 function ReadTokens(FilePath: AnsiString): TStringDynArray;
 var
-  Result : TStringDynArray = ();
+  Tokens : TStringDynArray = ();
   Lines : TStringDynArray;
   Line : AnsiString;
-  Tokens : TStringDynArray;
+  LineTokens : TStringDynArray;
   I, J : LongWord;
 begin
   Lines := ReadLines(FilePath);
@@ -181,12 +179,12 @@ begin
     Line := Trim(Lines[I]);
     if Length(Line) > 0 then
     begin
-      Tokens := Tokenize(Line);
-      for J := 0 to High(Tokens) do
-        Insert(Tokens[J], Result, Length(Result));
+      LineTokens := Tokenize(Line);
+      for J := 0 to High(LineTokens) do
+        Insert(LineTokens[J], Tokens, Length(Tokens));
     end;
   end;
-  ReadTokens := Result;
+  ReadTokens := Tokens;
 end;
 
 var
@@ -203,21 +201,23 @@ var
   Machine : TMachine;
   State : TState;
 begin
-  if ParamCount = 0 then
+  if ParamCount > 0 then
+    TurpFilePath := ParamStr(1)
+  else
   begin
     WriteLn(StdErr, 'Error: Input turp file is not provided');
     WriteLn(StdErr, 'Usage: turp <input.turp> <input.tape>');
     Halt(1);
   end;
-  TurpFilePath := ParamStr(1);
 
-  if ParamCount = 1 then
+  if ParamCount > 1 then
+    TapeFilePath := ParamStr(2)
+  else
   begin
     WriteLn(StdErr, 'Error: Input tape file is not provided');
     WriteLn(StdErr, 'Usage: turp <input.turp> <input.tape>');
     Halt(1);
   end;
-  TapeFilePath := ParamStr(2);
 
   Lines := ReadLines(TurpFilePath);
   for I := 0 to High(Lines) do
