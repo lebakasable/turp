@@ -1,6 +1,5 @@
 uses
-  Lexer,
-  SysUtils;
+  Lexer;
 
 type
   PStmt = ^TStmt;
