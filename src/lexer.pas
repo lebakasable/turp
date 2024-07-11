@@ -38,6 +38,8 @@ function LexerStripWhile(var Lexer: TLexer; const Skip: TCharPredicate): AnsiStr
 function LexerChopSymbol(var Lexer: TLexer): PSymbol;
 function LexerNextSymbol(var Lexer: TLexer): PSymbol;
 function LexerPeekSymbol(var Lexer: TLexer): PSymbol;
+function LexerParseSymbol(var Lexer: TLexer): TSymbol;
+function LexerExpectSymbols(var Lexer: TLexer; const ExpectedNames: Array of AnsiString): TSymbol;
 
 implementation
 
@@ -153,6 +155,7 @@ function LexerChopSymbol(var Lexer: TLexer): PSymbol;
 var
   Loc : TLoc;
   Special : AnsiString;
+  InsideQuotes : AnsiString;
   FoundSpecial : Boolean;
 begin
   while True do
@@ -174,7 +177,8 @@ begin
   begin
     LexerAdvanceLoc(Lexer, '''');
     Lexer.Source := Copy(Lexer.Source, 2, Length(Lexer.Source));
-    LexerChopSymbol^.Name := LexerStripWhile(Lexer, @IsNotQuote);
+    InsideQuotes := LexerStripWhile(Lexer, @IsNotQuote);
+    LexerChopSymbol^.Name := '''' + InsideQuotes + '''';
     LexerChopSymbol^.Loc := Loc;
     LexerAdvanceLoc(Lexer, '''');
     Lexer.Source := Copy(Lexer.Source, 2, Length(Lexer.Source));
@@ -215,6 +219,44 @@ begin
   if Lexer.Peek = nil then
     Lexer.Peek := LexerChopSymbol(Lexer);
   LexerPeekSymbol := Lexer.Peek;
+end;
+
+function LexerParseSymbol(var Lexer: TLexer): TSymbol;
+var
+  Symbol : PSymbol;
+begin
+  Symbol := LexerNextSymbol(Lexer);
+  if Symbol <> nil then
+    LexerParseSymbol := Symbol^
+  else
+  begin
+    WriteLn(StdErr, LocToStr(LexerLoc(Lexer)), ': ERROR: Expected symbol but reached the end of the input');
+    Halt(1);
+  end;
+end;
+
+function LexerExpectSymbols(var Lexer: TLexer; const ExpectedNames: Array of AnsiString): TSymbol;
+var
+  Symbol : TSymbol;
+  Buffer : AnsiString;
+  I : LongWord;
+begin
+  Symbol := LexerParseSymbol(Lexer);
+  for I := 0 to High(ExpectedNames) do
+    if Symbol.Name = ExpectedNames[I] then
+      Exit(Symbol);
+
+  Buffer := '';
+  for I := 0 to High(ExpectedNames) do
+    if I = 0 then
+      Buffer := Buffer + ExpectedNames[I]
+    else if I = High(ExpectedNames) then
+      Buffer := Buffer + ', or ' + ExpectedNames[I]
+    else
+      Buffer := Buffer + ', ' + ExpectedNames[I];
+
+  WriteLn(StdErr, LocToStr(Symbol.Loc), ': ERROR: Expected ', Buffer, ' but got ', Symbol.Name);
+  Halt(I);
 end;
 
 end.
