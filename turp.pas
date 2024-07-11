@@ -7,12 +7,6 @@ type
     Row, Col : LongWord;
   end;
 
-function LocToStr(const Loc: TLoc): AnsiString;
-begin
-  LocToStr := Format('%s:%d:%d', [Loc.FilePath, Loc.Row, Loc.Col]);
-end;
-
-type
   PSymbol = ^TSymbol;
   TSymbol = record
     Name : AnsiString;
@@ -85,6 +79,11 @@ type
     Head : LongWord;
     Halt : Boolean;
   end;
+
+function LocToStr(const Loc: TLoc): AnsiString;
+begin
+  LocToStr := Format('%s:%d:%d', [Loc.FilePath, Loc.Row, Loc.Col]);
+end;
 
 function CreateLexer(const Source, FilePath: AnsiString): TLexer;
 begin
