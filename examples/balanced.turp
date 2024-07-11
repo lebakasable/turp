@@ -9,13 +9,13 @@ case Pick  & & -> Verify
 case Verify 0 0 -> Balanced
 case Verify 1 1 -> Unbalanced
 
-var p is Paren case Inc1 p p -> Inc1
+var p : Paren case Inc1 p p -> Inc1
 case Inc1 & & -> Inc2
 
 case Inc2 0 1 <- Reset_Bits
 case Inc2 1 1 -> Inc2
 
-var p is Paren case Dec1 p p -> Dec1
+var p : Paren case Dec1 p p -> Dec1
 case Dec1 & & -> Dec2
 
 case Dec2 1 1 -> Dec2
@@ -23,8 +23,8 @@ case Dec2 0 0 <- Dec3
 case Dec3 1 0 <- Reset_Bits
 case Dec3 & & <- Unbalanced
 
-var b is Bit case Reset_Bits b b <- Reset_Bits
+var b : Bit case Reset_Bits b b <- Reset_Bits
 case Reset_Bits & & <- Reset_Parens
 
-var p is Paren case Reset_Parens p p <- Reset_Parens
+var p : Paren case Reset_Parens p p <- Reset_Parens
 case Reset_Parens & & -> Pick

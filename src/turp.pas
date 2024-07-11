@@ -314,7 +314,7 @@ begin
       ParseStmt.Kind := StmtVar;
       New(ParseStmt.Var_);
       ParseStmt.Var_^.Symbol := ParseSymbol(Lexer);
-      ExpectSymbols(Lexer, ['is']);
+      ExpectSymbols(Lexer, [':']);
       ParseStmt.Var_^.Type_ := ParseSymbol(Lexer);
       New(ParseStmt.Var_^.Body);
       ParseStmt.Var_^.Body^ := ParseStmt(Lexer);
