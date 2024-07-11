@@ -2,6 +2,9 @@ unit Lexer;
 
 interface
 
+const
+  Specials: Array of AnsiString = ('(', ')', '{', '}', ':');
+
 type
   TLoc = record
     FilePath : AnsiString;
@@ -123,9 +126,22 @@ begin
   IsSpace := C in [' ', #9, #10, #13];
 end;
 
-function IsNotSpace(const C: Char): Boolean;
+function IsNotSpaceOrSpecial(const C: Char): Boolean;
+var
+  Special : AnsiString;
 begin
-  IsNotSpace := not IsSpace(C);
+  IsNotSpaceOrSpecial := True;
+
+  if IsSpace(C) then Exit(False);
+
+  for Special in Specials do
+    if C = Special then
+      Exit(False);
+end;
+
+function IsNotQuote(const C: Char): Boolean;
+begin
+  IsNotQuote := C <> '''';
 end;
 
 function IsNotNewline(const C: Char): Boolean;
@@ -136,9 +152,8 @@ end;
 function LexerChopSymbol(var Lexer: TLexer): PSymbol;
 var
   Loc : TLoc;
-
-  Special : Array of AnsiString = ('(', ')', '{', '}', ':');
-  Name : AnsiString;
+  Special : AnsiString;
+  FoundSpecial : Boolean;
 begin
   while True do
   begin
@@ -150,22 +165,38 @@ begin
   end;
 
   if Length(Lexer.Source) = 0 then
-    Exit(nil);
+    Exit(Nil);
 
   Loc := LexerLoc(Lexer);
-
   New(LexerChopSymbol);
 
-  for Name in Special do
-    if LexerStripPrefix(Lexer, Name) then
-    begin
-      LexerChopSymbol^.Name := Name;
-      LexerChopSymbol^.Loc := Loc;
-      Exit(LexerChopSymbol);
-    end;
+  if Lexer.Source[1] = '''' then
+  begin
+    LexerAdvanceLoc(Lexer, '''');
+    Lexer.Source := Copy(Lexer.Source, 2, Length(Lexer.Source));
+    LexerChopSymbol^.Name := LexerStripWhile(Lexer, @IsNotQuote);
+    LexerChopSymbol^.Loc := Loc;
+    LexerAdvanceLoc(Lexer, '''');
+    Lexer.Source := Copy(Lexer.Source, 2, Length(Lexer.Source));
+  end
+  else
+  begin
+    FoundSpecial := False;
+    for Special in Specials do
+      if LexerStripPrefix(Lexer, Special) then
+      begin
+        LexerChopSymbol^.Name := Special;
+        LexerChopSymbol^.Loc := Loc;
+        FoundSpecial := True;
+        Exit(LexerChopSymbol);
+      end;
 
-  LexerChopSymbol^.Name := LexerStripWhile(Lexer, @IsNotSpace);
-  LexerChopSymbol^.Loc := Loc;
+    if not FoundSpecial then
+    begin
+      LexerChopSymbol^.Name := LexerStripWhile(Lexer, @IsNotSpaceOrSpecial);
+      LexerChopSymbol^.Loc := Loc;
+    end;
+  end;
 end;
 
 function LexerNextSymbol(var Lexer: TLexer): PSymbol;
