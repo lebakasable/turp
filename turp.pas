@@ -19,6 +19,8 @@ type
     Loc : TLoc;
   end;
   TSymbolArray = Array of TSymbol;
+
+  TCharPredicate = function(const C: Char): Boolean;
   
   TLexer = record
     Source : AnsiString;
@@ -29,17 +31,65 @@ type
     Peek : PSymbol;
   end;
 
+  PStmt = ^TStmt;
+
+  TStmtCase = record
+    State : TSymbol;
+    Read : TSymbol;
+    Write : TSymbol;
+    Step : TSymbol;
+    Next : TSymbol;
+  end;
+
+  TStmtVar = record
+    Symbol : TSymbol;
+    Type_ : TSymbol;
+    Body : PStmt;
+  end;
+
+  TStmtKind = (StmtCase, StmtVar);
+
+  TStmt = record
+    case Kind : TStmtKind of
+    StmtCase: (Case_ : ^TStmtCase);
+    StmtVar: (Var_ : ^TStmtVar)
+  end;
+  TStmtArray = Array of TStmt;
+
+  PSet = ^TSet;
+  TSet = TSymbolArray;
+
+  TTypeMapEntry = record
+    Name : AnsiString;
+    Set_ : TSet;
+  end;
+
+  TTypeMap = record
+    Entries : Array of TTypeMapEntry;
+  end;
+
+  TProgram = record
+    Stmts : TStmtArray;
+    Types : TTypeMap;
+  end;
+
+  PTriple = ^TTriple;
+  TTriple = record
+    Write, Step, Next : TSymbol
+  end;
+
+  TMachine = record
+    State : TSymbol;
+    Tape : TSymbolArray;
+    TapeDefault : TSymbol;
+    Head : LongWord;
+    Halt : Boolean;
+  end;
+
 function CreateLexer(const Source, FilePath: AnsiString): TLexer;
 begin
   CreateLexer.Source := Source;
   CreateLexer.FilePath := FilePath;
-  with CreateLexer do
-  begin
-    Pos := 0;
-    Bol := 0;
-    Row := 0;
-    Peek := nil;
-  end;
 end;
 
 function LexerLoc(const Lexer: TLexer): TLoc;
@@ -62,15 +112,14 @@ begin
   end;
 end;
 
-function StripPrefix(const Prefix, Str: AnsiString): AnsiString;
-begin
-  if Pos(Prefix, Str) = 1 then
-    StripPrefix := Copy(Str, Length(Prefix) + 1, Length(Str) - Length(Prefix))
-  else
-    StripPrefix := Str;
-end;
-
 function LexerStripPrefix(var Lexer: TLexer; const Prefix: AnsiString): Boolean;
+  function StripPrefix(const Prefix, Str: AnsiString): AnsiString;
+  begin
+    if Pos(Prefix, Str) = 1 then
+      StripPrefix := Copy(Str, Length(Prefix) + 1, Length(Str) - Length(Prefix))
+    else
+      StripPrefix := Str;
+  end;
 var
   Source : AnsiString;
   C : Char;
@@ -87,20 +136,20 @@ begin
     LexerStripPrefix := False;
 end;
 
-type
-  TCharPredicate = function(const C: Char): Boolean;
-
 function LexerStripWhile(var Lexer: TLexer; const Skip: TCharPredicate): AnsiString;
 var
-  I, EndPos : LongWord;
+  EndPos : LongWord;
+  C : Char;
 begin
   EndPos := 1;
-  for I := 1 to Length(Lexer.Source) do
+  for C in Lexer.Source do
   begin
-    if Skip(Lexer.Source[I]) then
-      Inc(EndPos)
-    else
-      Break;
+    if Skip(C) then
+    begin
+      LexerAdvanceLoc(Lexer, C);
+      Inc(EndPos);
+    end
+    else Break;
   end;
 
   LexerStripWhile := Copy(Lexer.Source, 1, EndPos - 1);
@@ -163,38 +212,150 @@ begin
   LexerPeekSymbol := Lexer.Peek;
 end;
 
-type
-  TCase = record
-    State : TSymbol;
-    Read  : TSymbol;
-    Write : TSymbol;
-    Step  : TSymbol;
-    Next  : TSymbol;
-  end;
-  TCaseArray = Array of TCase;
-
-  TMachine = record
-    State       : TSymbol;
-    Tape        : TSymbolArray;
-    TapeDefault : TSymbol;
-    Head        : LongWord;
-    Halt        : Boolean;
-  end;
-
-procedure MachineNext(var Machine: TMachine; const Cases: TCaseArray);
+procedure TypeMapInsert(var TypeMap: TTypeMap; const Name: AnsiString; const Set_: TSet);
 var
-  Case_ : TCase;
+  Entry : TTypeMapEntry;
 begin
-  for Case_ in Cases do
-    if (Case_.State.Name = Machine.State.Name) and (Case_.Read.Name = Machine.Tape[Machine.Head].Name) then
+  Entry.Name := Name;
+  Entry.Set_ := Set_;
+  Insert(Entry, TypeMap.Entries, Length(TypeMap.Entries));
+end;
+
+function TypeMapGet(const TypeMap: TTypeMap; const Name: AnsiString): PSet;
+var
+  Entry : TTypeMapEntry;
+begin
+  TypeMapGet := Nil;
+  for Entry in TypeMap.Entries do
+    if Entry.Name = Name then
     begin
-      Machine.Tape[Machine.Head] := Case_.Write;
-      case Case_.Step.Name of
+      New(TypeMapGet);
+      TypeMapGet^ := Entry.Set_;
+      Exit(TypeMapGet);
+    end;
+end;
+
+function StmtSubstitute(const Stmt: TStmt; const Symbol, By: TSymbol): TStmt;
+begin
+  case Stmt.Kind of
+    StmtCase:
+    begin
+      StmtSubstitute.Kind := StmtCase;
+      New(StmtSubstitute.Case_);
+      if Stmt.Case_^.State.Name = Symbol.Name then StmtSubstitute.Case_^.State := By
+      else StmtSubstitute.Case_^.State := Stmt.Case_^.State;
+      if Stmt.Case_^.Read.Name = Symbol.Name then StmtSubstitute.Case_^.Read := By
+      else StmtSubstitute.Case_^.Read := Stmt.Case_^.Read;
+      if Stmt.Case_^.Write.Name = Symbol.Name then StmtSubstitute.Case_^.Write := By
+      else StmtSubstitute.Case_^.Write := Stmt.Case_^.Write;
+      StmtSubstitute.Case_^.Step := Stmt.Case_^.Step;
+      if Stmt.Case_^.Next.Name = Symbol.Name then StmtSubstitute.Case_^.Next := By
+      else StmtSubstitute.Case_^.Next := Stmt.Case_^.Next;
+    end;
+    StmtVar:
+    begin
+      StmtSubstitute.Kind := StmtVar;
+      New(StmtSubstitute.Var_);
+      StmtSubstitute.Var_^.Symbol := Stmt.Var_^.Symbol;
+      if Stmt.Var_^.Type_.Name = Stmt.Var_^.Symbol.Name then StmtSubstitute.Var_^.Type_ := By
+      else StmtSubstitute.Var_^.Type_ := Stmt.Var_^.Type_;
+      New(StmtSubstitute.Var_^.Body);
+      StmtSubstitute.Var_^.Body^ := StmtSubstitute(StmtSubstitute.Var_^.Body^, Stmt.Var_^.Symbol, Stmt.Var_^.Type_);
+    end;
+  end;
+end;
+
+function StmtEntryState(const Stmt: TStmt; const Prog: TProgram): PSymbol;
+var
+  Set_ : PSet;
+begin
+  StmtEntryState := Nil;
+  case Stmt.Kind of
+    StmtCase:
+    begin
+      New(StmtEntryState);
+      StmtEntryState^ := Stmt.Case_^.State;
+    end;
+    StmtVar:
+    begin
+      Set_ := TypeMapGet(Prog.Types, Stmt.Var_^.Type_.Name);
+      if Set_ <> Nil then
+        if Length(Set_^) > 0 then
+          StmtEntryState := StmtEntryState(StmtSubstitute(Stmt.Var_^.Body^, Stmt.Var_^.Symbol, Set_^[0]), Prog)
+      else
+      begin
+        WriteLn(LocToStr(Stmt.Var_^.Type_.Loc), ': ERROR: Unknown type ', Stmt.Var_^.Type_.Name);
+        Halt(1);
+      end;
+    end;
+  end;
+end;
+
+function StmtMatchState(const Stmt: TStmt; const Prog: TProgram; const State, Read: TSymbol): PTriple;
+var
+  Set_ : PSet;
+  Symbol : TSymbol;
+  Triple : PTriple;
+begin
+  StmtMatchState := Nil;
+  case Stmt.Kind of
+    StmtCase:
+      if (Stmt.Case_^.State.Name = State.Name) and (Stmt.Case_^.Read.Name = Read.Name) then
+      begin
+        New(StmtMatchState);
+        StmtMatchState^.Write := Stmt.Case_^.Write;
+        StmtMatchState^.Step := Stmt.Case_^.Step;
+        StmtMatchState^.Next := Stmt.Case_^.Next;
+      end;
+    StmtVar:
+    begin
+      Set_ := TypeMapGet(Prog.Types, Stmt.Var_^.Type_.Name);
+      if Set_ <> Nil then
+        for Symbol in Set_^ do
+        begin
+          Triple := StmtMatchState(StmtSubstitute(Stmt.Var_^.Body^, Stmt.Var_^.Symbol, Symbol), Prog, State, Read);
+          if Triple <> Nil then
+            Exit(Triple);
+        end
+      else
+      begin
+        WriteLn(LocToStr(Stmt.Var_^.Type_.Loc), ': ERROR: Unknown type ', Stmt.Var_^.Type_.Name);
+        Halt(1);
+      end;
+    end;
+  end;
+end;
+
+function ProgramEntryState(const Prog: TProgram): PSymbol;
+var
+  Stmt : TStmt;
+  State : PSymbol;
+begin
+  ProgramEntryState := Nil;
+  for Stmt in Prog.Stmts do
+  begin
+    State := StmtEntryState(Stmt, Prog);
+    if State <> Nil then Exit(State);
+  end;
+end;
+
+procedure MachineNext(var Machine: TMachine; const Prog: TProgram);
+var
+  Stmt : TStmt;
+  Triple : PTriple;
+begin
+  for Stmt in Prog.Stmts do
+  begin
+    Triple := StmtMatchState(Stmt, Prog, Machine.State, Machine.Tape[Machine.Head]);
+    if Triple <> Nil then
+    begin
+      Machine.Tape[Machine.Head] := Triple^.Write;
+      case Triple^.Step.Name of
         '<-':
         begin
           if Machine.Head = 0 then
           begin
-            WriteLn(StdErr, LocToStr(Case_.Step.Loc), ': ERROR: Tape underflow');
+            WriteLn(StdErr, LocToStr(Triple^.Step.Loc), ': ERROR: Tape underflow');
             Halt(1);
           end;
           Dec(Machine.Head);
@@ -206,10 +367,11 @@ begin
             Insert(Machine.TapeDefault, Machine.Tape, Length(Machine.Tape));
         end;
       end;
-      Machine.State := Case_.Next;
+      Machine.State := Triple^.Next;
       Machine.Halt := False;
       Exit;
     end;
+  end;
 end;
 
 procedure MachinePrint(const Machine: TMachine);
@@ -244,38 +406,106 @@ begin
   end;
 end;
 
-function ParseStep(var Lexer: TLexer): TSymbol;
+function ExpectSymbols(var Lexer: TLexer; const ExpectedNames: Array of AnsiString): TSymbol;
 var
   Symbol : TSymbol;
+  Buffer : AnsiString;
+  I : LongWord;
 begin
   Symbol := ParseSymbol(Lexer);
-  case Symbol.Name of
-    '->', '<-': ParseStep := Symbol;
-  else
-    WriteLn(StdErr, LocToStr(Symbol.Loc), ': ERROR: Expected -> or <- but got ', Symbol.Name);
-    Halt(1);
-  end;
+  for I := 0 to High(ExpectedNames) do
+    if Symbol.Name = ExpectedNames[I] then
+      Exit(Symbol);
+
+  Buffer := '';
+  for I := 0 to High(ExpectedNames) do
+    if I = 0 then
+      Buffer := Buffer + ExpectedNames[I]
+    else if I = High(ExpectedNames) then
+      Buffer := Buffer + ', or ' + ExpectedNames[I]
+    else
+      Buffer := Buffer + ', ' + ExpectedNames[I];
+
+  WriteLn(StdErr, LocToStr(Symbol.Loc), ': ERROR: Expected ', Buffer, ' but got ', Symbol.Name);
+  Halt(I);
 end;
 
-function ParseCase(var Lexer: TLexer): TCase;
-begin
-  with ParseCase do
-  begin
-    State := ParseSymbol(Lexer);
-    Read  := ParseSymbol(Lexer);
-    Write := ParseSymbol(Lexer);
-    Step  := ParseStep(Lexer);
-    Next  := ParseSymbol(Lexer);
-  end;
-end;
-
-function ParseCases(var Lexer: TLexer): TCaseArray;
+function ParseSet(var Lexer: TLexer): TSet;
 var
-  Cases : TCaseArray = ();
+  Set_ : TSet = ();
+  Symbol : PSymbol;
 begin
-  while LexerPeekSymbol(Lexer) <> nil do
-    Insert(ParseCase(Lexer), Cases, Length(Cases));
-  ParseCases := Cases;
+  ExpectSymbols(Lexer, ['{']);
+  Symbol := LexerNextSymbol(Lexer);
+  while Symbol <> Nil do
+  begin
+    if Symbol^.Name = '}' then Break;
+    Insert(Symbol^, Set_, High(Set_));
+    Symbol := LexerNextSymbol(Lexer);
+  end;
+  ParseSet := Set_;
+end;
+
+function ParseStmt(var Lexer: TLexer): TStmt;
+var
+  Key : TSymbol;
+begin
+  Key := ExpectSymbols(Lexer, ['case', 'var']);
+  case Key.Name of
+    'case':
+    begin
+      ParseStmt.Kind := StmtCase;
+      New(ParseStmt.Case_);
+      ParseStmt.Case_^.State := ParseSymbol(Lexer);
+      ParseStmt.Case_^.Read := ParseSymbol(Lexer);
+      ParseStmt.Case_^.Write := ParseSymbol(Lexer);
+      ParseStmt.Case_^.Step := ExpectSymbols(Lexer, ['->', '<-']);
+      ParseStmt.Case_^.Next := ParseSymbol(Lexer);
+    end;
+    'var':
+    begin
+      ParseStmt.Kind := StmtVar;
+      New(ParseStmt.Var_);
+      ParseStmt.Var_^.Symbol := ParseSymbol(Lexer);
+      ExpectSymbols(Lexer, ['is']);
+      ParseStmt.Var_^.Type_ := ParseSymbol(Lexer);
+      New(ParseStmt.Var_^.Body);
+      ParseStmt.Var_^.Body^ := ParseStmt(Lexer);
+    end;
+  end;
+end;
+
+function ParseProgram(var Lexer: TLexer): TProgram;
+var
+  Prog : TProgram = (Stmts: (); Types: (Entries: ()));
+  Key : PSymbol;
+  Symbol : TSymbol;
+  Set_ : TSet;
+begin
+  Key := LexerPeekSymbol(Lexer);
+  while Key <> Nil do
+  begin
+    case Key^.Name of
+      'case', 'var': Insert(ParseStmt(Lexer), Prog.Stmts, Length(Prog.Stmts));
+      'type':
+      begin
+        LexerNextSymbol(Lexer);
+        Symbol := ParseSymbol(Lexer);
+        if TypeMapGet(Prog.Types, Symbol.Name) <> nil then
+        begin
+          WriteLn(StdErr, LocToStr(Symbol.Loc), ': ERROR: Redefinition of type ', Symbol.Name);
+          Halt(1);
+        end;
+        Set_ := ParseSet(Lexer);
+        TypeMapInsert(Prog.Types, Symbol.Name, Set_);
+      end;
+    else
+      WriteLn(StdErr, LocToStr(Key^.Loc), ': ERROR: Unknown keyword ', Key^.Name);
+      Halt(1);
+    end;
+    Key := LexerPeekSymbol(Lexer);
+  end;
+  ParseProgram := Prog;
 end;
 
 function ParseTape(var Lexer: TLexer): TSymbolArray;
@@ -318,10 +548,11 @@ var
   TurpSource, TapeSource : AnsiString;
   TurpLexer, TapeLexer : TLexer;
 
-  Cases : TCaseArray;
+  Prog : TProgram;
   Tape : TSymbolArray;
 
-  State, TapeDefault : TSymbol;
+  EntryState : PSymbol;
+  TapeDefault : TSymbol;
 
   Machine : TMachine;
 begin
@@ -343,11 +574,10 @@ begin
 
   TurpSource := SlurpFile(TurpPath);
   TurpLexer := CreateLexer(TurpSource, TurpPath);
-  Cases := ParseCases(TurpLexer);
+  Prog := ParseProgram(TurpLexer);
 
-  if Length(Cases) > 0 then
-    State := Cases[0].State
-  else
+  EntryState := ProgramEntryState(Prog);
+  if EntryState = Nil then
   begin
     WriteLn(StdErr, 'ERROR: The turp file must at least contain one case');
     Halt(1);
@@ -365,7 +595,7 @@ begin
     Halt(1);
   end;
 
-  Machine.State := State;
+  Machine.State := EntryState^;
   Machine.Tape := Tape;
   Machine.TapeDefault := TapeDefault;
 
@@ -373,6 +603,6 @@ begin
   begin
     MachinePrint(Machine);
     Machine.Halt := True;
-    MachineNext(Machine, Cases);
+    MachineNext(Machine, Prog);
   end;
 end.
