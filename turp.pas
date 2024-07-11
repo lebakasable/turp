@@ -165,6 +165,11 @@ begin
   IsNotSpace := not IsSpace(C);
 end;
 
+function IsNotNewline(const C: Char): Boolean;
+begin
+  IsNotNewline := C <> LineEnding;
+end;
+
 function LexerChopSymbol(var Lexer: TLexer): PSymbol;
 var
   Loc : TLoc;
@@ -172,7 +177,14 @@ var
   Special : Array of AnsiString = ('(', ')', '{', '}', ':');
   Name : AnsiString;
 begin
-  LexerStripWhile(Lexer, @IsSpace);
+  while True do
+  begin
+    LexerStripWhile(Lexer, @IsSpace);
+    if LexerStripPrefix(Lexer, '//') then
+      LexerStripWhile(Lexer, @IsNotNewline)
+    else
+      Break;
+  end;
 
   if Length(Lexer.Source) = 0 then
     Exit(nil);
